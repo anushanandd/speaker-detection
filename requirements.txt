@@ -1,0 +1,26 @@
+# Audio-Visual Speaker Detection System Dependencies
+# =================================================
+# Pinned versions for reproducible builds
+
+# Core scientific computing
+numpy==1.24.4
+scipy==1.10.1
+
+# Audio processing
+sounddevice==0.5.2
+
+# Computer vision and face detection
+opencv-python==4.12.0.88
+mediapipe==0.10.11
+
+# Configuration management
+PyYAML==6.0.1
+
+# Development and testing (optional)
+pytest==7.4.3
+pytest-cov==4.1.0
+black==23.9.1
+flake8==6.1.0
+
+# Note: All dependencies are compatible with Apple Silicon (ARM64)
+# For production deployment, consider using requirements-prod.txt

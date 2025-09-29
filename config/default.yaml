@@ -1,0 +1,49 @@
+# Audio-Visual Speaker Detection Configuration
+# ===========================================
+
+# Audio Configuration
+audio:
+  device_index: 0                    # ReSpeaker 4 Mic Array (UAC1.0)
+  sample_rate: 16000                 # Sample rate in Hz
+  n_channels: 6                      # Total channels (using 4 microphones)
+  mic_indexes: [2, 3, 4, 5]         # The 4 real microphones on ReSpeaker UAC1.0
+  frame_samples: 1024                # Analysis window (64 ms @16k)
+  hop_samples: 512                   # 50% overlap
+  mic_spacing: 0.035                 # Meters between adjacent mics (~3.5 cm)
+  sound_speed: 343.0                 # Speed of sound in m/s
+  activity_threshold: 0.003          # Audio activity detection threshold
+
+# Video Configuration
+video:
+  camera_index: 0                    # Camera device index
+  frame_width: 640                   # Frame width in pixels
+  frame_height: 480                  # Frame height in pixels
+  face_confidence_threshold: 0.7     # Minimum confidence for face detection
+  overlap_threshold: 0.3             # NMS overlap threshold
+
+# Detection Parameters
+detection:
+  speaker_confidence_threshold: 0.3  # Minimum confidence for speaker detection
+  angle_offset: 0.0                  # Calibration offset in degrees
+  max_faces: 10                      # Maximum number of faces to track
+
+# Microphone Pairs for TDOA calculation
+mic_pairs:
+  - [0, 3, 0.105]  # Outermost pair: d = 3*spacing
+  - [0, 2, 0.070]  # d = 2*spacing
+  - [1, 3, 0.070]  # d = 2*spacing
+  - [1, 2, 0.035]  # d = 1*spacing
+  - [0, 1, 0.035]  # d = 1*spacing
+  - [2, 3, 0.035]  # d = 1*spacing
+
+# Logging Configuration
+logging:
+  level: INFO                        # DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/speaker_detection.log" # Log file path (relative to project root)
+
+# Performance Settings
+performance:
+  audio_buffer_size: 4               # Audio buffer size for overlap
+  face_detection_skip_frames: 2      # Skip frames when no audio activity
+  max_processing_time: 0.1           # Maximum processing time per frame (seconds)
