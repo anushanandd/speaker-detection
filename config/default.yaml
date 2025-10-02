@@ -3,7 +3,7 @@
 
 # Audio Configuration
 audio:
-  device_index: 0                    # ReSpeaker 4 Mic Array (UAC1.0)
+  device_index: 2                    # ReSpeaker 4 Mic Array (UAC1.0)
   sample_rate: 16000                 # Sample rate in Hz
   n_channels: 6                      # Total channels (using 4 microphones)
   mic_indexes: [2, 3, 4, 5]         # The 4 real microphones on ReSpeaker UAC1.0
@@ -20,6 +20,7 @@ video:
   frame_height: 480                  # Frame height in pixels
   face_confidence_threshold: 0.7     # Minimum confidence for face detection
   overlap_threshold: 0.3             # NMS overlap threshold
+  mouth_open_threshold: 0.02         # Threshold for mouth open detection (0.0-1.0)
 
 # Detection Parameters
 detection:

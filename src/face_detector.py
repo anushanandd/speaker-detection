@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FaceDetection:
-    """Represents a detected face with bounding box and confidence."""
+    """Represents a detected face with bounding box, confidence, and mouth state."""
     x: int
     y: int
     width: int
@@ -28,6 +28,9 @@ class FaceDetection:
     confidence: float
     center_x: int
     center_y: int
+    is_mouth_open: bool = False
+    mouth_openness: float = 0.0
+    landmarks: Optional[List[Tuple[float, float]]] = None
     
     def __post_init__(self):
         """Calculate center coordinates after initialization."""
@@ -36,11 +39,11 @@ class FaceDetection:
 
 
 class FaceDetector:
-    """Centralized face detection utilities."""
+    """Centralized face detection utilities with mouth detection."""
     
     def __init__(self, video_config: VideoConfig, detection_config: DetectionConfig):
         """
-        Initialize face detector.
+        Initialize face detector with FaceMesh for mouth detection.
         
         Args:
             video_config: Video configuration
@@ -49,30 +52,101 @@ class FaceDetector:
         self.video_config = video_config
         self.detection_config = detection_config
         
-        # Initialize MediaPipe Face Detection
-        self.mp_face_detection = mp.solutions.face_detection
+        # Initialize MediaPipe FaceMesh for detailed facial landmarks
+        self.mp_face_mesh = mp.solutions.face_mesh
         self.mp_drawing = mp.solutions.drawing_utils
+        self.mp_drawing_styles = mp.solutions.drawing_styles
         
-        self.face_detection = self.mp_face_detection.FaceDetection(
-            model_selection=0,  # 0 for close-range, 1 for full-range
-            min_detection_confidence=video_config.face_confidence_threshold
+        self.face_mesh = self.mp_face_mesh.FaceMesh(
+            static_image_mode=False,
+            max_num_faces=detection_config.max_faces,
+            refine_landmarks=True,
+            min_detection_confidence=video_config.face_confidence_threshold,
+            min_tracking_confidence=0.5
         )
+        
+        # Mouth landmark indices (MediaPipe FaceMesh)
+        self.UPPER_LIP_POINTS = [61, 84, 17, 314, 405, 320, 307, 375, 321, 308, 324, 318]
+        self.LOWER_LIP_POINTS = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415]
+        
+        # Mouth detection threshold (adjustable via config)
+        self.mouth_open_threshold = getattr(video_config, 'mouth_open_threshold', 0.02)
         
         # Performance tracking
         self.frame_count = 0
         self.detection_skip_counter = 0
         
-        logger.info("FaceDetector initialized")
+        logger.info("FaceDetector initialized with FaceMesh for mouth detection")
+    
+    def detect_mouth_openness(self, landmarks) -> Tuple[bool, float]:
+        """
+        Detect if mouth is open and calculate openness level.
+        
+        Args:
+            landmarks: MediaPipe face landmarks
+            
+        Returns:
+            Tuple of (is_mouth_open, mouth_openness)
+        """
+        try:
+            # Get upper and lower lip points
+            upper_lip_y = np.mean([landmarks[i].y for i in self.UPPER_LIP_POINTS])
+            lower_lip_y = np.mean([landmarks[i].y for i in self.LOWER_LIP_POINTS])
+            
+            # Calculate mouth openness (vertical distance between lips)
+            mouth_openness = abs(upper_lip_y - lower_lip_y)
+            
+            # Determine if mouth is open based on threshold
+            is_mouth_open = mouth_openness > self.mouth_open_threshold
+            
+            return is_mouth_open, mouth_openness
+            
+        except Exception as e:
+            logger.warning(f"Error detecting mouth openness: {e}")
+            return False, 0.0
+    
+    def get_face_bounding_box(self, landmarks, frame_shape) -> Tuple[int, int, int, int]:
+        """
+        Calculate face bounding box from landmarks.
+        
+        Args:
+            landmarks: MediaPipe face landmarks
+            frame_shape: (height, width, channels) of the frame
+            
+        Returns:
+            Tuple of (x, y, width, height)
+        """
+        try:
+            # Get all landmark coordinates
+            x_coords = [landmark.x for landmark in landmarks]
+            y_coords = [landmark.y for landmark in landmarks]
+            
+            # Convert to pixel coordinates
+            h, w = frame_shape[:2]
+            x_pixels = [int(x * w) for x in x_coords]
+            y_pixels = [int(y * h) for y in y_coords]
+            
+            # Calculate bounding box
+            x = max(0, min(x_pixels))
+            y = max(0, min(y_pixels))
+            width = min(w - x, max(x_pixels) - x)
+            height = min(h - y, max(y_pixels) - y)
+            
+            return x, y, width, height
+            
+        except Exception as e:
+            logger.warning(f"Error calculating bounding box: {e}")
+            return 0, 0, 0, 0
     
     def detect_faces(self, frame: np.ndarray) -> List[FaceDetection]:
         """
-        Detect faces in the video frame using MediaPipe.
+        Detect faces in the video frame using MediaPipe FaceMesh with mouth detection.
         
         Args:
             frame: Input video frame (BGR format)
             
         Returns:
-            List of detected faces with bounding boxes and confidence scores
+            List of detected faces with bounding boxes, confidence scores, and mouth state
         """
         try:
             # Skip frames for performance if configured
@@ -84,30 +158,36 @@ class FaceDetector:
             
             # Convert BGR to RGB for MediaPipe
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.face_detection.process(rgb_frame)
+            results = self.face_mesh.process(rgb_frame)
             
             faces = []
-            if results.detections:
+            if results.multi_face_landmarks:
                 h, w, _ = frame.shape
                 
-                for detection in results.detections:
+                for face_landmarks in results.multi_face_landmarks:
                     try:
-                        bbox = detection.location_data.relative_bounding_box
-                        x = int(bbox.xmin * w)
-                        y = int(bbox.ymin * h)
-                        width = int(bbox.width * w)
-                        height = int(bbox.height * h)
-                        confidence = detection.score[0]
+                        # Calculate bounding box from landmarks
+                        x, y, width, height = self.get_face_bounding_box(face_landmarks.landmark, frame.shape)
                         
                         # Validate bounding box
                         if (x >= 0 and y >= 0 and 
                             x + width <= w and y + height <= h and
                             width > 0 and height > 0):
                             
+                            # Detect mouth openness
+                            is_mouth_open, mouth_openness = self.detect_mouth_openness(face_landmarks.landmark)
+                            
+                            # Convert landmarks to list of tuples for storage
+                            landmarks_list = [(lm.x, lm.y) for lm in face_landmarks.landmark]
+                            
+                            # Create face detection with mouth state
                             face = FaceDetection(
                                 x=x, y=y, width=width, height=height,
-                                confidence=confidence,
-                                center_x=0, center_y=0  # Will be calculated in __post_init__
+                                confidence=0.9,  # FaceMesh doesn't provide confidence, use high default
+                                center_x=0, center_y=0,  # Will be calculated in __post_init__
+                                is_mouth_open=is_mouth_open,
+                                mouth_openness=mouth_openness,
+                                landmarks=landmarks_list
                             )
                             faces.append(face)
                             
@@ -200,7 +280,7 @@ class FaceDetector:
     def draw_faces(self, frame: np.ndarray, faces: List[FaceDetection], 
                    active_face: Optional[FaceDetection] = None) -> np.ndarray:
         """
-        Draw face detections on the frame.
+        Draw face detections on the frame with mouth state indicators.
         
         Args:
             frame: Video frame to draw on
@@ -214,13 +294,21 @@ class FaceDetector:
             for face in faces:
                 # Determine color and thickness based on state
                 if active_face and face == active_face:
-                    color = (0, 255, 0)  # Green: active speaker
+                    if face.is_mouth_open:
+                        color = (0, 255, 0)  # Green: active speaker with open mouth
+                        status = "SPEAKING"
+                    else:
+                        color = (0, 255, 255)  # Yellow: active speaker with closed mouth
+                        status = "ACTIVE"
                     thickness = 3
-                    status = "ACTIVE"
                 else:
-                    color = (128, 128, 128)  # Gray: detected face
+                    if face.is_mouth_open:
+                        color = (0, 165, 255)  # Orange: face with open mouth
+                        status = "MOUTH OPEN"
+                    else:
+                        color = (128, 128, 128)  # Gray: detected face
+                        status = "FACE"
                     thickness = 2
-                    status = "FACE"
                 
                 # Draw face rectangle
                 cv2.rectangle(frame, (face.x, face.y), 
@@ -231,9 +319,14 @@ class FaceDetector:
                 cv2.putText(frame, status, (face.x, face.y - 10), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
                 
-                # Draw confidence score
-                cv2.putText(frame, f"{face.confidence:.2f}", 
-                           (face.x, face.y + face.height + 20), 
+                # Draw mouth openness level
+                mouth_text = f"Mouth: {face.mouth_openness:.3f}"
+                cv2.putText(frame, mouth_text, (face.x, face.y + face.height + 20), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+                
+                # Draw mouth state indicator
+                mouth_indicator = "OPEN" if face.is_mouth_open else "CLOSED"
+                cv2.putText(frame, mouth_indicator, (face.x, face.y + face.height + 40), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
             
             return frame
@@ -262,10 +355,10 @@ class FaceDetector:
         }
     
     def close(self) -> None:
-        """Close MediaPipe face detection."""
+        """Close MediaPipe face mesh."""
         try:
-            if hasattr(self, 'face_detection'):
-                self.face_detection.close()
+            if hasattr(self, 'face_mesh'):
+                self.face_mesh.close()
             logger.info("FaceDetector closed")
         except Exception as e:
             logger.error(f"Error closing FaceDetector: {e}")

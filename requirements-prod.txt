@@ -10,7 +10,7 @@ sounddevice==0.5.2
 
 # Computer vision and face detection
 opencv-python==4.12.0.88
-mediapipe==0.10.11
+mediapipe==0.10.5
 
 # Configuration management
 PyYAML==6.0.1
