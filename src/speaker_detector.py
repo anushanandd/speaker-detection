@@ -275,7 +275,15 @@ class AudioVisualSpeakerDetector:
         if not self.initialize_camera():
             return
         
-        # Query audio devices
+        # Auto-detect ReSpeaker device
+        respeaker_device = self.audio_processor.find_respeaker_device()
+        if respeaker_device is not None:
+            self.config_manager.audio_config.device_index = respeaker_device
+            logger.info(f"✅ Automatically selected ReSpeaker device: {respeaker_device}")
+        else:
+            logger.warning(f"⚠️  ReSpeaker not found, using configured device: {self.config_manager.audio_config.device_index}")
+        
+        # Query audio devices for reference
         self.audio_processor.query_devices()
         logger.info(f"Using samplerate: {self.config_manager.audio_config.sample_rate}, "
                    f"channels: {self.config_manager.audio_config.n_channels}, "

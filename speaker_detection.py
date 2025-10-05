@@ -26,7 +26,7 @@ from dataclasses import dataclass
 
 # ========= CONFIGURATION =========
 # Audio Configuration
-DEVICE_INDEX = 0       # ReSpeaker 4 Mic Array (UAC1.0)
+DEVICE_INDEX = None    # Will be auto-detected (ReSpeaker 4 Mic Array)
 SAMPLE_RATE = 16000
 N_CHANNELS = 6         # 6 channels as reported by macOS
 MIC_INDEXES = [2, 3, 4, 5]   # The 4 real microphones on ReSpeaker UAC1.0
@@ -75,6 +75,33 @@ class SpeakerDetection:
     audio_angle: float
     confidence: float
     is_speaking: bool
+
+
+def find_respeaker_device():
+    """
+    Automatically find ReSpeaker device by name.
+    
+    Returns:
+        Device index if found, None otherwise
+    """
+    try:
+        devices = sd.query_devices()
+        for i, device in enumerate(devices):
+            device_name = device['name'].lower()
+            if ('respeaker' in device_name and 
+                device['max_input_channels'] >= 6):
+                print(f"✅ Found ReSpeaker device: {i}: {device['name']} (inputs: {device['max_input_channels']})")
+                return i
+        
+        print("⚠️  ReSpeaker device not found. Available input devices:")
+        for i, device in enumerate(devices):
+            if device['max_input_channels'] > 0:
+                print(f"  {i}: {device['name']} (inputs: {device['max_input_channels']})")
+        return None
+        
+    except Exception as e:
+        print(f"❌ Error finding ReSpeaker device: {e}")
+        return None
 
 
 class AudioVisualSpeakerDetector:
@@ -448,6 +475,16 @@ class AudioVisualSpeakerDetector:
             return
         
         print("✅ Camera initialized successfully")
+        
+        # Auto-detect ReSpeaker device
+        global DEVICE_INDEX
+        detected_device = find_respeaker_device()
+        if detected_device is not None:
+            DEVICE_INDEX = detected_device
+        else:
+            print("❌ ReSpeaker not found! Please check hardware connection.")
+            return
+        
         print("Audio devices:")
         print(sd.query_devices())
         print(f"Using samplerate: {SAMPLE_RATE}, channels: {N_CHANNELS}, device index: {DEVICE_INDEX}")

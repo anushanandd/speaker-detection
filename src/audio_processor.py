@@ -291,6 +291,32 @@ class AudioProcessor:
         """Check if audio is currently active."""
         return self.is_audio_active
     
+    def find_respeaker_device(self) -> Optional[int]:
+        """
+        Automatically find ReSpeaker device by name.
+        
+        Returns:
+            Device index if found, None otherwise
+        """
+        try:
+            devices = sd.query_devices()
+            for i, device in enumerate(devices):
+                device_name = device['name'].lower()
+                if ('respeaker' in device_name and 
+                    device['max_input_channels'] >= 6):
+                    logger.info(f"Found ReSpeaker device: {i}: {device['name']} (inputs: {device['max_input_channels']})")
+                    return i
+            
+            logger.warning("ReSpeaker device not found. Available input devices:")
+            for i, device in enumerate(devices):
+                if device['max_input_channels'] > 0:
+                    logger.warning(f"  {i}: {device['name']} (inputs: {device['max_input_channels']})")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error finding ReSpeaker device: {e}")
+            return None
+    
     def query_devices(self) -> None:
         """Query and log available audio devices."""
         try:
