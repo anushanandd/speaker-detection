@@ -57,3 +57,24 @@ tmp/
 *.mp4
 *.avi
 *.mov
+
+# MediaPipe and ML models
+*.tflite
+*.pb
+models/
+
+# Test outputs and recordings
+test_outputs/
+recordings/
+screenshots/
+
+# Configuration overrides (keep default.yaml but ignore custom configs)
+config/custom_*.yaml
+config/local_*.yaml
+
+# Performance profiling
+*.prof
+*.profile
+
+# Jupyter notebooks checkpoints
+.ipynb_checkpoints/

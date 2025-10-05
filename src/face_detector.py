@@ -277,6 +277,90 @@ class FaceDetector:
             logger.error(f"Error calculating overlap: {e}")
             return 0.0
     
+    def draw_face_mesh(self, frame: np.ndarray) -> np.ndarray:
+        """
+        Draw face mesh with landmarks on the frame.
+        
+        Args:
+            frame: Video frame to draw on
+            
+        Returns:
+            Frame with face mesh drawn
+        """
+        try:
+            # Convert BGR to RGB for MediaPipe
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = self.face_mesh.process(rgb_frame)
+            
+            # Draw face mesh
+            if results.multi_face_landmarks:
+                for face_landmarks in results.multi_face_landmarks:
+                    # Draw face mesh contours
+                    self.mp_drawing.draw_landmarks(
+                        frame,
+                        face_landmarks,
+                        self.mp_face_mesh.FACEMESH_CONTOURS,
+                        None,
+                        self.mp_drawing_styles.get_default_face_mesh_contours_style()
+                    )
+                    
+                    # Draw face mesh tesselation
+                    self.mp_drawing.draw_landmarks(
+                        frame,
+                        face_landmarks,
+                        self.mp_face_mesh.FACEMESH_TESSELATION,
+                        None,
+                        self.mp_drawing_styles.get_default_face_mesh_tesselation_style()
+                    )
+                    
+                    # Count landmarks
+                    landmark_count = len(face_landmarks.landmark)
+                    
+                    # Draw landmark count
+                    cv2.putText(frame, f"Landmarks: {landmark_count}", 
+                               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    
+                    # Highlight mouth opening landmarks
+                    mouth_landmarks = [13, 14, 17, 18]
+                    h, w, _ = frame.shape
+                    for idx in mouth_landmarks:
+                        if idx < len(face_landmarks.landmark):
+                            landmark = face_landmarks.landmark[idx]
+                            x = int(landmark.x * w)
+                            y = int(landmark.y * h)
+                            cv2.circle(frame, (x, y), 3, (0, 0, 255), -1)  # Red dots for mouth
+                    
+                    # Draw mouth landmark count
+                    cv2.putText(frame, f"Mouth Points: {len(mouth_landmarks)}", 
+                               (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    
+                    # Calculate mouth openness
+                    try:
+                        upper_lip_y = np.mean([face_landmarks.landmark[i].y for i in [13, 14]])
+                        lower_lip_y = np.mean([face_landmarks.landmark[i].y for i in [17, 18]])
+                        mouth_openness = abs(lower_lip_y - upper_lip_y)
+                        mouth_openness_pixels = mouth_openness * h
+                        
+                        mouth_open_threshold_pixels = 15
+                        is_mouth_open = mouth_openness_pixels > mouth_open_threshold_pixels
+                        mouth_status = "OPEN" if is_mouth_open else "CLOSED"
+                        
+                        cv2.putText(frame, f"Mouth: {mouth_status} ({mouth_openness_pixels:.1f}px)", 
+                                   (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
+                                   (0, 255, 0) if is_mouth_open else (255, 0, 0), 2)
+                    except Exception as e:
+                        cv2.putText(frame, f"Mouth: Error calculating", 
+                                   (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            else:
+                cv2.putText(frame, "No faces detected", 
+                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            
+            return frame
+            
+        except Exception as e:
+            logger.error(f"Error drawing face mesh: {e}")
+            return frame
+
     def draw_faces(self, frame: np.ndarray, faces: List[FaceDetection], 
                    active_face: Optional[FaceDetection] = None) -> np.ndarray:
         """

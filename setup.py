@@ -109,9 +109,11 @@ def main():
     if audio_ok and camera_ok and mediapipe_ok:
         print("\n🎉 Setup completed successfully!")
         print("\nNext steps:")
-        print("1. Update DEVICE_INDEX in speaker_detection.py with your ReSpeaker device index")
+        print("1. Update device_index in config/default.yaml with your ReSpeaker device index")
         print("2. Run: python test_webcam.py (to test camera and face detection)")
-        print("3. Run: python speaker_detection.py (to start the full system)")
+        print("3. Run: python main.py (to start the full system)")
+        print("4. Run: python main.py --audio-only (for audio-only demo)")
+        print("5. Run: python main.py --face-detection-only (for face detection demo)")
     else:
         print("\n❌ Setup incomplete. Please fix the issues above before proceeding.")
 

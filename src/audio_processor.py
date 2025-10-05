@@ -31,16 +31,18 @@ class AudioFrame:
 class AudioProcessor:
     """Centralized audio processing utilities."""
     
-    def __init__(self, audio_config: AudioConfig, performance_config: PerformanceConfig):
+    def __init__(self, audio_config: AudioConfig, performance_config: PerformanceConfig, mic_pairs: List[Tuple[int, int, float]] = None):
         """
         Initialize audio processor.
         
         Args:
             audio_config: Audio configuration
             performance_config: Performance configuration
+            mic_pairs: Microphone pairs for TDOA calculation
         """
         self.config = audio_config
         self.perf_config = performance_config
+        self.mic_pairs = mic_pairs or []
         
         # Audio processing state
         self.audio_buffer = deque(maxlen=performance_config.audio_buffer_size)
@@ -206,18 +208,7 @@ class AudioProcessor:
                 frame = audio_buffer[:self.config.frame_samples, :]
                 audio_buffer = audio_buffer[self.config.hop_samples:, :]
                 
-                # Get microphone pairs from config (will be passed from main detector)
-                # For now, use default pairs
-                mic_pairs = [
-                    (0, 3, 3 * self.config.mic_spacing),
-                    (0, 2, 2 * self.config.mic_spacing),
-                    (1, 3, 2 * self.config.mic_spacing),
-                    (1, 2, 1 * self.config.mic_spacing),
-                    (0, 1, 1 * self.config.mic_spacing),
-                    (2, 3, 1 * self.config.mic_spacing),
-                ]
-                
-                azimuth = self.process_audio_block(frame, mic_pairs)
+                azimuth = self.process_audio_block(frame, self.mic_pairs)
                 
                 with self.audio_lock:
                     self.current_angle = azimuth

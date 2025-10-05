@@ -49,7 +49,8 @@ class AudioVisualSpeakerDetector:
         # Initialize components
         self.audio_processor = AudioProcessor(
             self.config_manager.audio_config,
-            self.config_manager.performance_config
+            self.config_manager.performance_config,
+            self.config_manager.get_mic_pairs()
         )
         
         self.face_detector = FaceDetector(

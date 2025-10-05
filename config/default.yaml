@@ -21,6 +21,7 @@ video:
   face_confidence_threshold: 0.7     # Minimum confidence for face detection
   overlap_threshold: 0.3             # NMS overlap threshold
   mouth_open_threshold: 0.02         # Threshold for mouth open detection (0.0-1.0)
+  face_detection_skip_frames: 2      # Skip frames for performance optimization
 
 # Detection Parameters
 detection:

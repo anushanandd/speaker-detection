@@ -158,7 +158,7 @@ class TestFaceDetector(unittest.TestCase):
         # Test with overlapping faces
         faces = [
             FaceDetection(0, 0, 100, 100, 0.9, 50, 50),
-            FaceDetection(50, 50, 100, 100, 0.8, 100, 100),  # Overlaps with first
+            FaceDetection(25, 25, 100, 100, 0.8, 75, 75),  # Overlaps more with first
         ]
         result = detector.non_max_suppression(faces)
         self.assertEqual(len(result), 1)  # Should keep only the higher confidence one
@@ -177,6 +177,8 @@ class TestVideoConfig(unittest.TestCase):
         self.assertEqual(config.frame_height, 480)
         self.assertEqual(config.face_confidence_threshold, 0.7)
         self.assertEqual(config.overlap_threshold, 0.3)
+        self.assertEqual(config.mouth_open_threshold, 0.02)
+        self.assertEqual(config.face_detection_skip_frames, 2)
 
 
 class TestDetectionConfig(unittest.TestCase):

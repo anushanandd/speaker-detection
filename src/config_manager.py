@@ -38,6 +38,8 @@ class VideoConfig:
     frame_height: int = 480
     face_confidence_threshold: float = 0.7
     overlap_threshold: float = 0.3
+    mouth_open_threshold: float = 0.02
+    face_detection_skip_frames: int = 2
 
 
 @dataclass
@@ -125,7 +127,9 @@ class ConfigManager:
             frame_width=video_data.get('frame_width', self.video_config.frame_width),
             frame_height=video_data.get('frame_height', self.video_config.frame_height),
             face_confidence_threshold=video_data.get('face_confidence_threshold', self.video_config.face_confidence_threshold),
-            overlap_threshold=video_data.get('overlap_threshold', self.video_config.overlap_threshold)
+            overlap_threshold=video_data.get('overlap_threshold', self.video_config.overlap_threshold),
+            mouth_open_threshold=video_data.get('mouth_open_threshold', self.video_config.mouth_open_threshold),
+            face_detection_skip_frames=video_data.get('face_detection_skip_frames', self.video_config.face_detection_skip_frames)
         )
         
         # Detection configuration
@@ -264,7 +268,9 @@ class ConfigManager:
                 'frame_width': self.video_config.frame_width,
                 'frame_height': self.video_config.frame_height,
                 'face_confidence_threshold': self.video_config.face_confidence_threshold,
-                'overlap_threshold': self.video_config.overlap_threshold
+                'overlap_threshold': self.video_config.overlap_threshold,
+                'mouth_open_threshold': self.video_config.mouth_open_threshold,
+                'face_detection_skip_frames': self.video_config.face_detection_skip_frames
             },
             'detection': {
                 'speaker_confidence_threshold': self.detection_config.speaker_confidence_threshold,

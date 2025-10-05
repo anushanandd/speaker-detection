@@ -88,6 +88,19 @@ Examples:
         help='Validate configuration file and exit'
     )
     
+    # Demo modes
+    parser.add_argument(
+        '--audio-only',
+        action='store_true',
+        help='Run audio-only DOA demo (no video)'
+    )
+    
+    parser.add_argument(
+        '--face-detection-only',
+        action='store_true',
+        help='Run face detection demo only (no audio)'
+    )
+    
     # Performance options
     parser.add_argument(
         '--skip-frames',
@@ -160,6 +173,118 @@ def list_devices() -> None:
         print("  ❌ opencv-python not available")
     except Exception as e:
         print(f"  ❌ Error querying video devices: {e}")
+
+
+def run_audio_only_demo(config_manager) -> None:
+    """Run audio-only DOA demo."""
+    print("🎤 Audio-Only DOA Demo")
+    print("=" * 30)
+    print("This will show audio direction detection without video")
+    print("Press Ctrl+C to stop")
+    print("")
+    
+    try:
+        from src.audio_processor import AudioProcessor
+        
+        audio_processor = AudioProcessor(
+            config_manager.audio_config,
+            config_manager.performance_config,
+            config_manager.get_mic_pairs()
+        )
+        
+        # Auto-detect ReSpeaker device
+        respeaker_device = audio_processor.find_respeaker_device()
+        if respeaker_device is not None:
+            config_manager.audio_config.device_index = respeaker_device
+            print(f"✅ Using ReSpeaker device: {respeaker_device}")
+        else:
+            print(f"⚠️  Using configured device: {config_manager.audio_config.device_index}")
+        
+        # Start audio stream
+        with audio_processor:
+            if not audio_processor.start_stream():
+                print("❌ Failed to start audio stream")
+                return
+            
+            print("✅ Audio stream started!")
+            print("🚀 Start speaking to see direction detection...")
+            
+            try:
+                while True:
+                    angle = audio_processor.get_current_angle()
+                    level = audio_processor.get_audio_level()
+                    active = audio_processor.is_active()
+                    
+                    status = "ACTIVE" if active else "SILENT"
+                    print(f"Direction: {angle:6.1f}° | Level: {level:.3f} | Status: {status}", end="\r")
+                    
+                    import time
+                    time.sleep(0.1)
+                    
+            except KeyboardInterrupt:
+                print("\n👋 Stopped by user")
+                
+    except Exception as e:
+        print(f"❌ Error in audio demo: {e}")
+
+
+def run_face_detection_demo(config_manager) -> None:
+    """Run face detection demo only."""
+    print("👥 Face Detection Demo")
+    print("=" * 30)
+    print("This will show face detection with landmarks")
+    print("Press 'q' to quit")
+    print("")
+    
+    try:
+        import cv2
+        from src.face_detector import FaceDetector
+        
+        face_detector = FaceDetector(
+            config_manager.video_config,
+            config_manager.detection_config
+        )
+        
+        # Initialize camera
+        cap = cv2.VideoCapture(config_manager.video_config.camera_index)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, config_manager.video_config.frame_width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config_manager.video_config.frame_height)
+        
+        if not cap.isOpened():
+            print("❌ Error: Could not open camera")
+            return
+        
+        print("✅ Camera initialized successfully")
+        print("📹 Starting face detection...")
+        
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    print("❌ Error: Could not read frame from camera")
+                    break
+                
+                # Draw face mesh with landmarks
+                frame = face_detector.draw_face_mesh(frame)
+                
+                # Show frame
+                cv2.imshow('Face Detection Demo', frame)
+                
+                # Handle key press
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
+                    break
+                    
+        except KeyboardInterrupt:
+            print("\n👋 Stopped by user")
+        finally:
+            cap.release()
+            cv2.destroyAllWindows()
+            face_detector.close()
+            print("🧹 Cleanup completed")
+            
+    except Exception as e:
+        print(f"❌ Error in face detection demo: {e}")
 
 
 def test_system_components() -> bool:
@@ -301,13 +426,23 @@ def main() -> int:
             print(f"❌ Configuration error: {e}")
             return 1
     
+    # Load configuration for demo modes and main application
+    config_manager = ConfigManager(args.config)
+    
+    # Apply CLI overrides
+    apply_cli_overrides(args, config_manager)
+    
+    # Handle demo modes
+    if args.audio_only:
+        run_audio_only_demo(config_manager)
+        return 0
+    
+    if args.face_detection_only:
+        run_face_detection_demo(config_manager)
+        return 0
+    
     # Main application
     try:
-        # Load configuration
-        config_manager = ConfigManager(args.config)
-        
-        # Apply CLI overrides
-        apply_cli_overrides(args, config_manager)
         
         # Validate final configuration
         if not config_manager.validate_config():
