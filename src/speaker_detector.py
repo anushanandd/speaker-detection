@@ -33,15 +33,17 @@ class SpeakerDetection:
 class AudioVisualSpeakerDetector:
     """Main audio-visual speaker detection system."""
     
-    def __init__(self, config_file: str = "config/default.yaml"):
+    def __init__(self, config_file: str = "config/default.yaml", show_face_mesh: bool = False):
         """
         Initialize the audio-visual speaker detection system.
         
         Args:
             config_file: Path to configuration file
+            show_face_mesh: Whether to show MediaPipe face mesh with landmarks
         """
         # Load configuration
         self.config_manager = ConfigManager(config_file)
+        self.show_face_mesh = show_face_mesh
         
         if not self.config_manager.validate_config():
             raise ValueError("Invalid configuration")
@@ -66,6 +68,9 @@ class AudioVisualSpeakerDetector:
         # Performance tracking
         self.frame_times = []
         self.processing_times = []
+        self.fps_counter = 0
+        self.fps_start_time = time.time()
+        self.current_fps = 0.0
         
         logger.info("AudioVisualSpeakerDetector initialized")
     
@@ -127,17 +132,22 @@ class AudioVisualSpeakerDetector:
                 max_distance = self.config_manager.video_config.frame_width // 2
                 confidence = max(0.0, 1.0 - (min_distance / max_distance))
                 
-                # Determine if the person is speaking
+                # Only consider someone a speaker if:
+                # 1. Audio is active (not silent)
+                # 2. Confidence is above threshold
+                # 3. Face is close enough to audio direction
                 is_speaking = (confidence > self.config_manager.detection_config.speaker_confidence_threshold and 
                              self.audio_processor.is_active())
                 
-                return SpeakerDetection(
-                    face=best_face,
-                    audio_angle=audio_angle,
-                    confidence=confidence,
-                    is_speaking=is_speaking,
-                    timestamp=time.time()
-                )
+                # Only return a SpeakerDetection if there's actually audio activity
+                if self.audio_processor.is_active():
+                    return SpeakerDetection(
+                        face=best_face,
+                        audio_angle=audio_angle,
+                        confidence=confidence,
+                        is_speaking=is_speaking,
+                        timestamp=time.time()
+                    )
             
             return None
             
@@ -147,7 +157,7 @@ class AudioVisualSpeakerDetector:
     
     def draw_status_info(self, frame: np.ndarray, active_speaker: Optional[SpeakerDetection]) -> np.ndarray:
         """
-        Draw system status information on the frame.
+        Draw minimal system status information on the frame.
         
         Args:
             frame: Video frame to draw on
@@ -157,49 +167,50 @@ class AudioVisualSpeakerDetector:
             Frame with status information drawn
         """
         try:
-            # System status
-            status_y = 30
-            line_height = 25
+            h, w = frame.shape[:2]
             
-            # Audio direction
-            cv2.putText(frame, f"Audio Direction: {self.audio_processor.get_current_angle():.1f}°", 
-                       (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-            status_y += line_height
+            # Direction indicator (top left)
+            angle = self.audio_processor.get_current_angle()
+            # Ensure angle is a valid number
+            if np.isnan(angle) or np.isinf(angle):
+                angle = 0.0
+            cv2.putText(frame, f"Direction: {angle:.0f} deg", 
+                       (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
             
-            # Audio level
-            cv2.putText(frame, f"Audio Level: {self.audio_processor.get_audio_level():.3f}", 
-                       (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-            status_y += line_height
+            # FPS counter (top right)
+            fps_color = (0, 255, 0) if self.current_fps >= 20 else (0, 255, 255) if self.current_fps >= 10 else (0, 0, 255)
+            cv2.putText(frame, f"FPS: {self.current_fps:.1f}", 
+                       (w - 100, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, fps_color, 2)
             
-            # Audio activity
-            audio_status = "YES" if self.audio_processor.is_active() else "NO"
-            cv2.putText(frame, f"Audio Active: {audio_status}", 
-                       (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-            status_y += line_height
-            
-            # Speaker confidence
-            if active_speaker:
-                cv2.putText(frame, f"Speaker Confidence: {active_speaker.confidence:.2f}", 
-                           (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                status_y += line_height
-                
-                # Speaking status
-                speaking_status = "SPEAKING" if active_speaker.is_speaking else "DETECTED"
-                color = (0, 255, 0) if active_speaker.is_speaking else (255, 0, 0)
-                cv2.putText(frame, f"Status: {speaking_status}", 
-                           (10, status_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-            
-            # Performance info
+            # Processing time (top left, below direction)
             if self.processing_times:
                 avg_time = np.mean(self.processing_times[-10:])  # Last 10 frames
-                cv2.putText(frame, f"Avg Processing: {avg_time*1000:.1f}ms", 
-                           (10, frame.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+                cv2.putText(frame, f"Proc: {avg_time*1000:.1f}ms", 
+                           (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+            
+            # Audio activity (top left, below processing time)
+            audio_status = "VAD: ACTIVE" if self.audio_processor.is_active() else "VAD: SILENT"
+            color = (0, 0, 0)  # Black text for better visibility
+            cv2.putText(frame, f"{audio_status}", 
+                       (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
             
             return frame
             
         except Exception as e:
             logger.error(f"Error drawing status info: {e}")
             return frame
+    
+    def update_fps(self) -> None:
+        """Update FPS counter."""
+        self.fps_counter += 1
+        current_time = time.time()
+        time_diff = current_time - self.fps_start_time
+        
+        # Update FPS every second
+        if time_diff >= 1.0:
+            self.current_fps = self.fps_counter / time_diff
+            self.fps_counter = 0
+            self.fps_start_time = current_time
     
     def initialize_camera(self) -> bool:
         """
@@ -270,7 +281,7 @@ class AudioVisualSpeakerDetector:
         logger.info("🎤🎥 Audio-Visual Speaker Detection System")
         logger.info("=" * 50)
         logger.info("Hardware: ReSpeaker 4 Mic Array (UAC1.0) + Webcam")
-        logger.info("Algorithm: GCC-PHAT DOA + MediaPipe Face Detection")
+        logger.info("Algorithm: WebRTC VAD + GCC-PHAT DOA + Tracking + MediaPipe Face Detection")
         
         # Initialize camera
         if not self.initialize_camera():
@@ -300,9 +311,10 @@ class AudioVisualSpeakerDetector:
                 logger.info("✅ Audio stream started successfully!")
                 logger.info("🎮 Controls: Press 'q' to quit")
                 logger.info("🎨 Visual indicators:")
-                logger.info("  🟢 GREEN: Speaking (audio detected)")
-                logger.info("  🔵 BLUE:  Face detected (no audio)")
-                logger.info("  ⚪ GRAY:  Face detected")
+                logger.info("  🟢 GREEN: Speaking + Mouth Open")
+                logger.info("  🔵 BLUE:  Speaking + Mouth Closed")
+                logger.info("  🟡 YELLOW: Mouth Open (not speaking)")
+                logger.info("  🔴 RED:   Mouth Closed (not speaking)")
                 logger.info("🚀 System ready! Start speaking to test...")
                 
                 # Main processing loop
@@ -316,7 +328,18 @@ class AudioVisualSpeakerDetector:
                         # Process frame
                         faces, active_speaker = self.process_frame(frame)
                         
-                        # Draw detections
+                        # Update FPS counter
+                        self.update_fps()
+                        
+                        # Draw detections based on visualization mode
+                        if self.show_face_mesh:
+                            # Show MediaPipe face mesh with full contours and tessellation
+                            frame = self.face_detector.draw_face_mesh(frame, show_full_mesh=True)
+                        else:
+                            # Show only mouth landmarks (no full mesh)
+                            frame = self.face_detector.draw_face_mesh(frame, show_full_mesh=False)
+                        
+                        # Always draw face rectangles with speaker status
                         frame = self.face_detector.draw_faces(frame, faces, 
                                                             active_speaker.face if active_speaker else None)
                         

@@ -13,6 +13,7 @@ import logging
 from collections import deque
 from typing import List, Tuple, Optional, Callable
 from dataclasses import dataclass
+import webrtcvad
 
 from .config_manager import AudioConfig, PerformanceConfig
 
@@ -50,6 +51,15 @@ class AudioProcessor:
         self.audio_level = 0.0
         self.is_audio_active = False
         self.audio_lock = threading.Lock()
+        
+        # VAD (Voice Activity Detection)
+        self.vad = webrtcvad.Vad(2)  # Aggressiveness level 0-3 (2 is balanced)
+        
+        # DOA tracking and smoothing
+        self.angle_history = deque(maxlen=10)  # Keep last 10 angle estimates
+        self.vad_history = deque(maxlen=5)     # Keep last 5 VAD decisions
+        self.smoothed_angle = 0.0
+        self.confidence_threshold = 0.7        # Minimum confidence for stable DOA
         
         # Stream management
         self.stream = None
@@ -114,6 +124,51 @@ class AudioProcessor:
             logger.error(f"Error in GCC-PHAT calculation: {e}")
             return 0.0, np.array([])
     
+    def detect_voice_activity(self, audio_frame: np.ndarray) -> bool:
+        """
+        Detect voice activity using WebRTC VAD.
+        
+        Args:
+            audio_frame: Audio frame (mono, 16kHz, 16-bit)
+            
+        Returns:
+            True if voice activity detected, False otherwise
+        """
+        try:
+            # Convert to 16-bit PCM for WebRTC VAD
+            if audio_frame.dtype != np.int16:
+                audio_frame = (audio_frame * 32767).astype(np.int16)
+            
+            # WebRTC VAD expects 10ms, 20ms, or 30ms frames
+            # We'll use 20ms frames (320 samples at 16kHz)
+            frame_size = 320
+            if len(audio_frame) >= frame_size:
+                # Take the first channel if multi-channel
+                if audio_frame.ndim > 1:
+                    mono_frame = audio_frame[:, 0]
+                else:
+                    mono_frame = audio_frame
+                
+                # Ensure frame is exactly the right size
+                if len(mono_frame) > frame_size:
+                    mono_frame = mono_frame[:frame_size]
+                elif len(mono_frame) < frame_size:
+                    # Pad with zeros if too short
+                    mono_frame = np.pad(mono_frame, (0, frame_size - len(mono_frame)))
+                
+                # Convert to bytes for WebRTC VAD
+                audio_bytes = mono_frame.tobytes()
+                
+                # Detect voice activity
+                is_speech = self.vad.is_speech(audio_bytes, self.config.sample_rate)
+                return is_speech
+            
+            return False
+            
+        except Exception as e:
+            logger.warning(f"Error in VAD detection: {e}")
+            return False
+    
     @staticmethod
     def tdoa_to_angle(tau: float, distance: float, sound_speed: float = 343.0) -> float:
         """
@@ -135,48 +190,108 @@ class AudioProcessor:
             logger.error(f"Error in TDOA to angle conversion: {e}")
             return 0.0
     
+    def smooth_angle_estimate(self, angle: float, vad_decision: bool) -> float:
+        """
+        Apply smoothing and tracking to angle estimates.
+        
+        Args:
+            angle: Raw angle estimate
+            vad_decision: VAD decision for this frame
+            
+        Returns:
+            Smoothed angle estimate
+        """
+        try:
+            # Add to history
+            self.angle_history.append(angle)
+            self.vad_history.append(vad_decision)
+            
+            # Only smooth if we have enough history and recent VAD activity
+            if len(self.angle_history) >= 3:
+                # Check if we have recent voice activity
+                recent_vad_activity = sum(self.vad_history) >= 2  # At least 2 out of 5 recent frames
+                
+                if recent_vad_activity:
+                    # Apply median filter for robustness against outliers
+                    angles = list(self.angle_history)
+                    angles.sort()
+                    median_angle = angles[len(angles) // 2]
+                    
+                    # Apply circular mean for better angle averaging
+                    # Convert to complex numbers for circular mean
+                    complex_angles = [np.exp(1j * np.radians(ang)) for ang in angles]
+                    mean_complex = np.mean(complex_angles)
+                    circular_mean_angle = np.degrees(np.angle(mean_complex))
+                    
+                    # Weighted combination of median and circular mean
+                    self.smoothed_angle = 0.7 * circular_mean_angle + 0.3 * median_angle
+                else:
+                    # No recent voice activity, keep previous estimate
+                    pass  # self.smoothed_angle remains unchanged
+            
+            return self.smoothed_angle
+            
+        except Exception as e:
+            logger.warning(f"Error in angle smoothing: {e}")
+            return angle
+    
     def process_audio_block(self, audio_data: np.ndarray, mic_pairs: List[Tuple[int, int, float]]) -> float:
         """
-        Process audio block and return azimuth angle.
+        Process audio block with VAD + DOA + tracking pipeline.
         
         Args:
             audio_data: Audio data from microphone array
             mic_pairs: List of microphone pairs for TDOA calculation
             
         Returns:
-            azimuth: Azimuth angle in degrees
+            azimuth: Smoothed azimuth angle in degrees
         """
         try:
-            angles = []
+            # Step 1: Voice Activity Detection (VAD)
+            # Use first microphone for VAD
+            vad_audio = audio_data[:, 0] if audio_data.shape[1] > 0 else audio_data.flatten()
+            vad_decision = self.detect_voice_activity(vad_audio)
             
-            for (i, j, distance) in mic_pairs:
-                if i < audio_data.shape[1] and j < audio_data.shape[1]:
-                    tau, _ = self.gcc_phat(
-                        audio_data[:, i],
-                        audio_data[:, j],
-                        self.config.sample_rate,
-                        max_tau=distance / self.config.sound_speed,
-                        interp=8
-                    )
-                    angle = self.tdoa_to_angle(tau, distance, self.config.sound_speed)
-                    angles.append(angle)
+            # Step 2: Direction of Arrival (DOA) - only if VAD is positive
+            raw_angle = 0.0
+            if vad_decision:
+                angles = []
+                
+                for (i, j, distance) in mic_pairs:
+                    if i < audio_data.shape[1] and j < audio_data.shape[1]:
+                        tau, _ = self.gcc_phat(
+                            audio_data[:, i],
+                            audio_data[:, j],
+                            self.config.sample_rate,
+                            max_tau=distance / self.config.sound_speed,
+                            interp=8
+                        )
+                        angle = self.tdoa_to_angle(tau, distance, self.config.sound_speed)
+                        angles.append(angle)
+                
+                if angles:
+                    angles = np.array(angles)
+                    
+                    # Robust averaging (trim extremes)
+                    if angles.size >= 4:
+                        angles = np.sort(angles)[1:-1]  # Drop min/max
+                    
+                    raw_angle = np.mean(angles)
             
-            if not angles:
-                return 0.0
+            # Step 3: Smoothing and Tracking
+            smoothed_angle = self.smooth_angle_estimate(raw_angle, vad_decision)
             
-            angles = np.array(angles)
-            
-            # Robust averaging (trim extremes)
-            if angles.size >= 4:
-                angles = np.sort(angles)[1:-1]  # Drop min/max
-            
-            azimuth = np.mean(angles)
-            
-            # Check for audio activity
+            # Update audio level and activity status
             self.audio_level = np.mean(np.abs(audio_data))
-            self.is_audio_active = self.audio_level > self.config.activity_threshold
             
-            return azimuth
+            # Audio is active if VAD detects speech
+            self.is_audio_active = vad_decision
+            
+            # Update current angle with smoothed estimate
+            with self.audio_lock:
+                self.current_angle = smoothed_angle
+            
+            return smoothed_angle
             
         except Exception as e:
             logger.error(f"Error processing audio block: {e}")
@@ -281,6 +396,15 @@ class AudioProcessor:
     def is_active(self) -> bool:
         """Check if audio is currently active."""
         return self.is_audio_active
+    
+    def get_vad_status(self) -> dict:
+        """Get VAD and tracking status for debugging."""
+        return {
+            'vad_history': list(self.vad_history),
+            'angle_history': list(self.angle_history),
+            'smoothed_angle': self.smoothed_angle,
+            'recent_vad_activity': sum(self.vad_history) >= 2 if len(self.vad_history) >= 2 else False
+        }
     
     def find_respeaker_device(self) -> Optional[int]:
         """

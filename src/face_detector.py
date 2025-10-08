@@ -307,12 +307,13 @@ class FaceDetector:
             logger.error(f"Error calculating overlap: {e}")
             return 0.0
     
-    def draw_face_mesh(self, frame: np.ndarray) -> np.ndarray:
+    def draw_face_mesh(self, frame: np.ndarray, show_full_mesh: bool = False) -> np.ndarray:
         """
         Draw face mesh with landmarks on the frame.
         
         Args:
             frame: Video frame to draw on
+            show_full_mesh: Whether to show full face mesh or just landmarks
             
         Returns:
             Frame with face mesh drawn
@@ -322,37 +323,31 @@ class FaceDetector:
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = self.face_mesh.process(rgb_frame)
             
-            # Draw face mesh
             if results.multi_face_landmarks:
                 for face_landmarks in results.multi_face_landmarks:
-                    # Draw face mesh contours
-                    self.mp_drawing.draw_landmarks(
-                        frame,
-                        face_landmarks,
-                        self.mp_face_mesh.FACEMESH_CONTOURS,
-                        None,
-                        self.mp_drawing_styles.get_default_face_mesh_contours_style()
-                    )
-                    
-                    # Draw face mesh tesselation
-                    self.mp_drawing.draw_landmarks(
-                        frame,
-                        face_landmarks,
-                        self.mp_face_mesh.FACEMESH_TESSELATION,
-                        None,
-                        self.mp_drawing_styles.get_default_face_mesh_tesselation_style()
-                    )
-                    
-                    # Count landmarks
-                    landmark_count = len(face_landmarks.landmark)
-                    
-                    # Draw landmark count
-                    cv2.putText(frame, f"Landmarks: {landmark_count}", 
-                               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    
-                    # Highlight mouth opening landmarks (central lip points)
-                    mouth_landmarks = [self.UPPER_LIP_CENTER, self.LOWER_LIP_CENTER]
                     h, w, _ = frame.shape
+                    
+                    if show_full_mesh:
+                        # Draw full face mesh contours
+                        self.mp_drawing.draw_landmarks(
+                            frame,
+                            face_landmarks,
+                            self.mp_face_mesh.FACEMESH_CONTOURS,
+                            None,
+                            self.mp_drawing_styles.get_default_face_mesh_contours_style()
+                        )
+                        
+                        # Draw face mesh tesselation
+                        self.mp_drawing.draw_landmarks(
+                            frame,
+                            face_landmarks,
+                            self.mp_face_mesh.FACEMESH_TESSELATION,
+                            None,
+                            self.mp_drawing_styles.get_default_face_mesh_tesselation_style()
+                        )
+                    
+                    # Always highlight mouth opening landmarks (central lip points)
+                    mouth_landmarks = [self.UPPER_LIP_CENTER, self.LOWER_LIP_CENTER]
                     for idx in mouth_landmarks:
                         if idx < len(face_landmarks.landmark):
                             landmark = face_landmarks.landmark[idx]
@@ -368,30 +363,6 @@ class FaceDetector:
                             x = int(landmark.x * w)
                             y = int(landmark.y * h)
                             cv2.circle(frame, (x, y), 2, (255, 255, 0), -1)  # Yellow dots for reference points
-                    
-                    # Draw mouth landmark count
-                    cv2.putText(frame, f"Mouth Points: {len(mouth_landmarks)}", 
-                               (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                    
-                    # Calculate mouth openness using improved method
-                    try:
-                        is_mouth_open, normalized_openness = self.detect_mouth_openness(face_landmarks.landmark)
-                        mouth_status = "OPEN" if is_mouth_open else "CLOSED"
-                        
-                        # Display normalized ratio and threshold for debugging
-                        cv2.putText(frame, f"Mouth: {mouth_status} (ratio: {normalized_openness:.3f})", 
-                                   (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
-                                   (0, 255, 0) if is_mouth_open else (255, 0, 0), 2)
-                        
-                        # Show threshold for reference
-                        cv2.putText(frame, f"Threshold: {self.mouth_open_threshold:.3f}", 
-                                   (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-                    except Exception as e:
-                        cv2.putText(frame, f"Mouth: Error calculating", 
-                                   (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            else:
-                cv2.putText(frame, "No faces detected", 
-                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
             return frame
             
@@ -415,21 +386,27 @@ class FaceDetector:
         try:
             for face in faces:
                 # Determine color and thickness based on state
-                if active_face and face == active_face:
-                    if face.is_mouth_open:
-                        color = (0, 255, 0)  # Green: active speaker with open mouth
-                        status = "SPEAKING"
-                    else:
-                        color = (0, 255, 255)  # Yellow: active speaker with closed mouth
-                        status = "ACTIVE"
+                is_speaking = active_face and face == active_face
+                
+                if is_speaking and face.is_mouth_open:
+                    # Green: speaking AND mouth open
+                    color = (0, 255, 0)
+                    status = "SPEAKING"
                     thickness = 3
+                elif is_speaking and not face.is_mouth_open:
+                    # Blue: speaking but mouth closed
+                    color = (255, 0, 0)
+                    status = "SPEAKING"
+                    thickness = 3
+                elif not is_speaking and face.is_mouth_open:
+                    # Yellow: mouth open but not speaking
+                    color = (0, 255, 255)
+                    status = "MOUTH OPEN"
+                    thickness = 2
                 else:
-                    if face.is_mouth_open:
-                        color = (0, 165, 255)  # Orange: face with open mouth
-                        status = "MOUTH OPEN"
-                    else:
-                        color = (128, 128, 128)  # Gray: detected face
-                        status = "FACE"
+                    # Red: mouth closed and not speaking
+                    color = (0, 0, 255)
+                    status = "FACE"
                     thickness = 2
                 
                 # Draw face rectangle

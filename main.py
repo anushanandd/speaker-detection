@@ -32,6 +32,7 @@ Examples:
   python main.py --device 1 --camera 1             # Use specific devices
   python main.py --verbose                          # Enable debug logging
   python main.py --test                             # Test system components
+  python main.py --show-face-mesh                   # Show MediaPipe face mesh
         """
     )
     
@@ -112,6 +113,13 @@ Examples:
         '--buffer-size',
         type=int,
         help='Audio buffer size (overrides config)'
+    )
+    
+    # Visualization options
+    parser.add_argument(
+        '--show-face-mesh',
+        action='store_true',
+        help='Show MediaPipe face mesh with landmarks (default: simple rectangles)'
     )
     
     return parser
@@ -450,7 +458,7 @@ def main() -> int:
             return 1
         
         # Create and run detector
-        with AudioVisualSpeakerDetector(args.config) as detector:
+        with AudioVisualSpeakerDetector(args.config, show_face_mesh=args.show_face_mesh) as detector:
             detector.run()
         
         return 0
