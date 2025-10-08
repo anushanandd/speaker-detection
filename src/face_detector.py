@@ -65,12 +65,18 @@ class FaceDetector:
             min_tracking_confidence=0.5
         )
         
-        # Mouth landmark indices (MediaPipe FaceMesh)
-        self.UPPER_LIP_POINTS = [61, 84, 17, 314, 405, 320, 307, 375, 321, 308, 324, 318]
-        self.LOWER_LIP_POINTS = [78, 95, 88, 178, 87, 14, 317, 402, 318, 324, 308, 415]
+        # Mouth landmark indices (MediaPipe FaceMesh) - using central points for stability
+        self.UPPER_LIP_CENTER = 13  # Central upper lip point
+        self.LOWER_LIP_CENTER = 14  # Central lower lip point
         
-        # Mouth detection threshold (adjustable via config)
-        self.mouth_open_threshold = getattr(video_config, 'mouth_open_threshold', 0.02)
+        # Face reference points for normalization
+        self.LEFT_EYE = 33   # Left eye corner
+        self.RIGHT_EYE = 362 # Right eye corner
+        self.LEFT_MOUTH = 61  # Left mouth corner
+        self.RIGHT_MOUTH = 291 # Right mouth corner
+        
+        # Mouth detection threshold (normalized ratio, distance-invariant)
+        self.mouth_open_threshold = getattr(video_config, 'mouth_open_threshold', 0.15)
         
         # Performance tracking
         self.frame_count = 0
@@ -80,26 +86,50 @@ class FaceDetector:
     
     def detect_mouth_openness(self, landmarks) -> Tuple[bool, float]:
         """
-        Detect if mouth is open and calculate openness level.
+        Detect if mouth is open and calculate openness level using distance-invariant normalization.
+        
+        Uses central lip landmarks (13, 14) and normalizes by face width for scale invariance.
         
         Args:
             landmarks: MediaPipe face landmarks
             
         Returns:
-            Tuple of (is_mouth_open, mouth_openness)
+            Tuple of (is_mouth_open, normalized_mouth_openness_ratio)
         """
         try:
-            # Get upper and lower lip points
-            upper_lip_y = np.mean([landmarks[i].y for i in self.UPPER_LIP_POINTS])
-            lower_lip_y = np.mean([landmarks[i].y for i in self.LOWER_LIP_POINTS])
+            # Get central lip landmarks (most stable points)
+            upper_lip = landmarks[self.UPPER_LIP_CENTER]
+            lower_lip = landmarks[self.LOWER_LIP_CENTER]
             
-            # Calculate mouth openness (vertical distance between lips)
-            mouth_openness = abs(upper_lip_y - lower_lip_y)
+            # Calculate vertical distance between lips
+            mouth_vertical_distance = abs(upper_lip.y - lower_lip.y)
             
-            # Determine if mouth is open based on threshold
-            is_mouth_open = mouth_openness > self.mouth_open_threshold
+            # Get face reference points for normalization
+            left_eye = landmarks[self.LEFT_EYE]
+            right_eye = landmarks[self.RIGHT_EYE]
+            left_mouth = landmarks[self.LEFT_MOUTH]
+            right_mouth = landmarks[self.RIGHT_MOUTH]
             
-            return is_mouth_open, mouth_openness
+            # Calculate face width (eye distance as primary reference)
+            eye_distance = abs(right_eye.x - left_eye.x)
+            mouth_width = abs(right_mouth.x - left_mouth.x)
+            
+            # Use the larger of eye distance or mouth width for normalization
+            # This ensures we have a stable reference even if one measurement is poor
+            face_reference = max(eye_distance, mouth_width)
+            
+            # Avoid division by zero
+            if face_reference < 1e-6:
+                logger.warning("Face reference distance too small for normalization")
+                return False, 0.0
+            
+            # Normalize mouth openness by face reference (distance-invariant ratio)
+            normalized_mouth_openness = mouth_vertical_distance / face_reference
+            
+            # Determine if mouth is open based on normalized threshold
+            is_mouth_open = normalized_mouth_openness > self.mouth_open_threshold
+            
+            return is_mouth_open, normalized_mouth_openness
             
         except Exception as e:
             logger.warning(f"Error detecting mouth openness: {e}")
@@ -320,34 +350,42 @@ class FaceDetector:
                     cv2.putText(frame, f"Landmarks: {landmark_count}", 
                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                     
-                    # Highlight mouth opening landmarks
-                    mouth_landmarks = [13, 14, 17, 18]
+                    # Highlight mouth opening landmarks (central lip points)
+                    mouth_landmarks = [self.UPPER_LIP_CENTER, self.LOWER_LIP_CENTER]
                     h, w, _ = frame.shape
                     for idx in mouth_landmarks:
                         if idx < len(face_landmarks.landmark):
                             landmark = face_landmarks.landmark[idx]
                             x = int(landmark.x * w)
                             y = int(landmark.y * h)
-                            cv2.circle(frame, (x, y), 3, (0, 0, 255), -1)  # Red dots for mouth
+                            cv2.circle(frame, (x, y), 4, (0, 0, 255), -1)  # Red dots for central lip points
+                    
+                    # Also highlight reference points for normalization
+                    reference_landmarks = [self.LEFT_EYE, self.RIGHT_EYE, self.LEFT_MOUTH, self.RIGHT_MOUTH]
+                    for idx in reference_landmarks:
+                        if idx < len(face_landmarks.landmark):
+                            landmark = face_landmarks.landmark[idx]
+                            x = int(landmark.x * w)
+                            y = int(landmark.y * h)
+                            cv2.circle(frame, (x, y), 2, (255, 255, 0), -1)  # Yellow dots for reference points
                     
                     # Draw mouth landmark count
                     cv2.putText(frame, f"Mouth Points: {len(mouth_landmarks)}", 
                                (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                     
-                    # Calculate mouth openness
+                    # Calculate mouth openness using improved method
                     try:
-                        upper_lip_y = np.mean([face_landmarks.landmark[i].y for i in [13, 14]])
-                        lower_lip_y = np.mean([face_landmarks.landmark[i].y for i in [17, 18]])
-                        mouth_openness = abs(lower_lip_y - upper_lip_y)
-                        mouth_openness_pixels = mouth_openness * h
-                        
-                        mouth_open_threshold_pixels = 15
-                        is_mouth_open = mouth_openness_pixels > mouth_open_threshold_pixels
+                        is_mouth_open, normalized_openness = self.detect_mouth_openness(face_landmarks.landmark)
                         mouth_status = "OPEN" if is_mouth_open else "CLOSED"
                         
-                        cv2.putText(frame, f"Mouth: {mouth_status} ({mouth_openness_pixels:.1f}px)", 
+                        # Display normalized ratio and threshold for debugging
+                        cv2.putText(frame, f"Mouth: {mouth_status} (ratio: {normalized_openness:.3f})", 
                                    (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, 
                                    (0, 255, 0) if is_mouth_open else (255, 0, 0), 2)
+                        
+                        # Show threshold for reference
+                        cv2.putText(frame, f"Threshold: {self.mouth_open_threshold:.3f}", 
+                                   (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
                     except Exception as e:
                         cv2.putText(frame, f"Mouth: Error calculating", 
                                    (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
