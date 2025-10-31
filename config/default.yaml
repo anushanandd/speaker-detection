@@ -3,14 +3,14 @@
 
 # Audio Configuration
 audio:
-  device_index: 2                    # ReSpeaker 4 Mic Array (UAC1.0)
+  device_index: 0                    # ReSpeaker 8 Mic Array (auto-detected)
   sample_rate: 16000                 # Sample rate in Hz
-  n_channels: 6                      # Total channels (using 4 microphones)
-  mic_indexes: [2, 3, 4, 5]         # The 4 real microphones on ReSpeaker UAC1.0
+  n_channels: 8                      # Total channels (8 microphones)
+  mic_indexes: [0, 1, 2, 3, 4, 5, 6, 7]  # All 8 microphones on ReSpeaker 8 Mic Array
   frame_samples: 1024                # Analysis window (64 ms @16k)
   hop_samples: 512                   # 50% overlap
   mic_spacing: 0.035                 # Meters between adjacent mics (~3.5 cm)
-  sound_speed: 343.0                 # Speed of sound in m/s
+  sound_speed: 340.0                 # Speed of sound in m/s (matches DOA implementation)
   activity_threshold: 0.003          # Audio activity detection threshold
 
 # Video Configuration
@@ -30,13 +30,13 @@ detection:
   max_faces: 10                      # Maximum number of faces to track
 
 # Microphone Pairs for TDOA calculation
+# For 8-mic circular array: opposite pairs (180 degrees apart)
+# Mic layout: 0: 0°, 1: 45°, 2: 90°, 3: 135°, 4: 180°, 5: 225°, 6: 270°, 7: 315°
 mic_pairs:
-  - [0, 3, 0.105]  # Outermost pair: d = 3*spacing
-  - [0, 2, 0.070]  # d = 2*spacing
-  - [1, 3, 0.070]  # d = 2*spacing
-  - [1, 2, 0.035]  # d = 1*spacing
-  - [0, 1, 0.035]  # d = 1*spacing
-  - [2, 3, 0.035]  # d = 1*spacing
+  - [0, 4, 0.081]  # Opposite pair: 0° - 180° (diameter)
+  - [1, 5, 0.081]  # Opposite pair: 45° - 225°
+  - [2, 6, 0.081]  # Opposite pair: 90° - 270°
+  - [3, 7, 0.081]  # Opposite pair: 135° - 315°
 
 # Logging Configuration
 logging:

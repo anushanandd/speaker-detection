@@ -223,8 +223,10 @@ class ConfigManager:
             errors.append("Sample rate must be positive")
         if self.audio_config.n_channels <= 0:
             errors.append("Number of channels must be positive")
-        if len(self.audio_config.mic_indexes) != 4:
-            errors.append("Must specify exactly 4 microphone indexes")
+        if len(self.audio_config.mic_indexes) < 2:
+            errors.append("Must specify at least 2 microphone indexes")
+        if len(self.audio_config.mic_indexes) > self.audio_config.n_channels:
+            errors.append(f"Number of microphone indexes ({len(self.audio_config.mic_indexes)}) cannot exceed number of channels ({self.audio_config.n_channels})")
         if self.audio_config.mic_spacing <= 0:
             errors.append("Microphone spacing must be positive")
         

@@ -355,22 +355,48 @@ class AudioProcessor:
             
             self.callback = callback
             
-            self.stream = sd.InputStream(
-                device=self.config.device_index,
-                channels=self.config.n_channels,
-                samplerate=self.config.sample_rate,
-                dtype='float32',
-                blocksize=self.config.hop_samples,
-                callback=self.audio_callback
-            )
+            # Query device info for debugging
+            try:
+                device_info = sd.query_devices(self.config.device_index)
+                logger.info(f"Device info: {device_info['name']}, "
+                          f"max_input_channels: {device_info['max_input_channels']}, "
+                          f"default_samplerate: {device_info['default_samplerate']}")
+            except Exception as e:
+                logger.warning(f"Could not query device info: {e}")
             
-            self.stream.start()
-            self.is_streaming = True
-            logger.info("Audio stream started successfully")
-            return True
+            # Try with specified blocksize first, then fallback to None (auto)
+            blocksize_options = [self.config.hop_samples, None]
+            
+            for blocksize in blocksize_options:
+                try:
+                    logger.info(f"Attempting to start stream with blocksize={blocksize}, "
+                              f"channels={self.config.n_channels}, "
+                              f"samplerate={self.config.sample_rate}")
+                    
+                    self.stream = sd.InputStream(
+                        device=self.config.device_index,
+                        channels=self.config.n_channels,
+                        samplerate=self.config.sample_rate,
+                        dtype='float32',
+                        blocksize=blocksize,
+                        callback=self.audio_callback
+                    )
+                    
+                    self.stream.start()
+                    self.is_streaming = True
+                    logger.info(f"Audio stream started successfully with blocksize={blocksize}")
+                    return True
+                except Exception as e:
+                    if blocksize is None:
+                        # Last attempt failed
+                        raise
+                    logger.warning(f"Failed with blocksize={blocksize}, trying auto blocksize: {e}")
+            
+            return False
             
         except Exception as e:
             logger.error(f"Error starting audio stream: {e}")
+            logger.error(f"Check if device is already in use or macOS microphone permissions are granted")
             return False
     
     def stop_stream(self) -> None:
